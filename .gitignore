@@ -1,0 +1,29 @@
+# Local environment files
+.env
+.env.*
+!.env.example
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.sqlite3
+
+# Node.js and Next.js
+node_modules/
+.next/
+out/
+coverage/
+npm-debug.log*
+
+# Flutter and Dart
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+/mobile/build/
+
+# Operating system and editor files
+.DS_Store
+Thumbs.db
