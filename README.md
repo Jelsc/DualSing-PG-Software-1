@@ -1,6 +1,6 @@
 # DualSign IA
 
-Phase 1 builds on the Phase 0 local-development foundation with backend identity, institution membership, tenant authorization, consent history, and audit events. Product learning and communication workflows remain out of scope.
+Phase 2 builds on the Phase 0 local-development foundation and Phase 1 identity layer with a tenant-scoped LSB vocabulary catalog and a provisional, renderer-independent SignPlan API. Product learning and communication workflows remain out of scope.
 
 ## Quick Start
 
@@ -50,8 +50,8 @@ flutter run
 
 **The Compose images, credentials, and debug settings are for local development only. They are not production deployment configuration.**
 
-## Backend identity (Phase 1)
+## Backend identity and vocabulary (Phases 1–2)
 
 The browser authenticates through Django sessions and CSRF-protected same-origin requests. Flutter uses short-lived access JWTs and rotating, revocable refresh JWTs. Institution roles and access are resolved from live active memberships; platform administrators are Django staff superusers. A user's active memberships and route policies are described in [`backend/README.md`](backend/README.md).
 
-Compose applies database migrations before starting the backend. Run focused checks with `docker compose exec -T backend python manage.py test` and `docker compose exec -T backend python manage.py makemigrations --check --dry-run`. No public signup or user-management/admin UI is included.
+Compose applies database migrations before starting the backend. Phase 2 provides session + CSRF-protected vocabulary management APIs and read-only JWT catalog endpoints for mobile; it does not include the Phase 3 admin UI, translation, grammar, or rendering. See [`backend/README.md`](backend/README.md) for lifecycle, role matrix, API payloads, and Docker checks. Run backend checks with `docker compose exec -T backend python manage.py test` and `docker compose exec -T backend python manage.py makemigrations --check --dry-run`. No public signup or user-management/admin UI is included.

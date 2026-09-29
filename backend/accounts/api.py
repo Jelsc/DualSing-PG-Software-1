@@ -5,13 +5,13 @@ from django.middleware.csrf import get_token
 from ninja import Router
 from ninja.errors import HttpError
 from ninja.security import django_auth
-from ninja.utils import check_csrf
 from ninja_jwt.tokens import RefreshToken
 from ninja_jwt.exceptions import TokenError
 
 from .authentication import LiveUserJWTAuth
 from .models import AuditRecord, ConsentRecord, Institution
 from .policies import active_memberships, can_create_institution, can_view_institution, is_platform_admin
+from .security import require_csrf
 from .schemas import (
     ConsentIn,
     ConsentOut,
@@ -31,11 +31,6 @@ institutions = Router()
 @web.get("/csrf")
 def csrf_token(request):
     return {"csrf_token": get_token(request)}
-
-
-def require_csrf(request):
-    if check_csrf(request):
-        raise HttpError(403, "CSRF check failed")
 
 
 @web.post("/login")

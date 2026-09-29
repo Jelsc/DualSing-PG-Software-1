@@ -13,10 +13,23 @@ def active_memberships(user):
 
 def can_view_institution(user, institution_id):
     if is_platform_admin(user):
-        return Institution.objects.filter(pk=institution_id).first()
+        return Institution.objects.filter(pk=institution_id, is_active=True).first()
     membership = active_memberships(user).filter(institution_id=institution_id).first()
     return membership.institution if membership else None
 
 
 def can_create_institution(user):
     return is_platform_admin(user)
+
+
+def can_manage_vocabulary(user, institution_id):
+    if is_platform_admin(user):
+        return Institution.objects.filter(pk=institution_id, is_active=True).exists()
+    return active_memberships(user).filter(
+        institution_id=institution_id,
+        role__in=(Membership.Role.INSTITUTION_ADMIN, Membership.Role.VOCABULARY_REVIEWER),
+    ).exists()
+
+
+def can_review_vocabulary(user, institution_id):
+    return can_manage_vocabulary(user, institution_id)
