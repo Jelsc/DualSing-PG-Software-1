@@ -1,62 +1,16 @@
 import Link from "next/link";
 
 export default function Home() {
-  const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "/api";
-
   return (
-    <div className="admin-shell">
-      <header className="topbar">
-        <Link className="brand" href="/" aria-label="DualSign administration home">
-          <span className="brand__mark" aria-hidden="true">
-            DS
-          </span>
-          <span className="brand__text">
-            <strong>DualSign</strong>
-            <span>ADMINISTRATION</span>
-          </span>
-        </Link>
-        <div className="environment-label">
-          <span className="environment-label__dot" aria-hidden="true" />
-          Local development
-        </div>
-      </header>
-
-      <main className="workspace">
-        <section className="intro" aria-labelledby="page-title">
-          <p className="eyebrow">PHASE 0 / FOUNDATION</p>
-          <h1 id="page-title">Administrative workspace</h1>
-          <p className="intro__summary">
-            A starting point for platform operations. Product workflows are not
-            part of this phase.
-          </p>
-        </section>
-
-        <section className="api-panel" aria-labelledby="api-title">
-          <div className="api-panel__copy">
-            <p className="eyebrow">API BOUNDARY</p>
-            <h2 id="api-title">Check the service endpoint</h2>
-            <p>
-              Requests use the same origin as this page and are routed through
-              Nginx to the Django API.
-            </p>
-            <a
-              className="api-link"
-              href={`${apiBaseUrl.replace(/\/$/, "")}/health`}
-            >
-              Open health response <span aria-hidden="true">↗</span>
-            </a>
-          </div>
-          <div className="route-card" aria-label="Health request path">
-            <span>REQUEST PATH</span>
-            <code>{`${apiBaseUrl.replace(/\/$/, "")}/health`}</code>
-          </div>
-        </section>
-
-        <footer className="workspace-footer">
-          Phase 0 local development <span aria-hidden="true">·</span> No product
-          data is available
-        </footer>
-      </main>
-    </div>
+    <main className="product-home">
+      <p className="kicker">DUALSIGN PRODUCT SURFACES</p>
+      <h1>One language platform.<br />Clear boundaries.</h1>
+      <p className="subtle">DualSign separates internal operations from company workspaces while the mobile app serves end users.</p>
+      <div className="surface-grid">
+        <Link className="surface-card" href="/portal"><span className="kicker">COMPANY SAAS</span><strong>Open the portal</strong><span>Institution-scoped vocabulary workspace for active members.</span></Link>
+        <Link className="surface-card" href="/backoffice"><span className="kicker">INTERNAL DUALSIGN</span><strong>Open backoffice</strong><span>Operations shell for platform staff. Enterprise controls are not live yet.</span></Link>
+      </div>
+      <p className="home-note">Flutter is the consumer/mobile surface. Free, Plus, and enterprise access are represented as entitlements; billing and Stripe are future work.</p>
+    </main>
   );
 }

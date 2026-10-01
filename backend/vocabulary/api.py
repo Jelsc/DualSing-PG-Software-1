@@ -319,6 +319,13 @@ def create_variant(request, institution_id: int, sign_pk: int, payload: VariantI
     return 201, variant
 
 
+@admin_vocabulary.get("/{institution_id}/signs/{sign_pk}/variants", response=list[VariantOut])
+def list_variants(request, institution_id: int, sign_pk: int):
+    require_manager(request, institution_id)
+    get_scoped(Sign.objects, institution_id, sign_pk, "Sign not found")
+    return SignVariant.objects.filter(institution_id=institution_id, sign_id=sign_pk)
+
+
 @admin_vocabulary.patch("/{institution_id}/variants/{variant_id}", response=VariantOut)
 def update_variant(request, institution_id: int, variant_id: int, payload: VariantPatch):
     require_csrf(request)
@@ -337,6 +344,7 @@ def delete_variant(request, institution_id: int, variant_id: int):
     require_csrf(request)
     institution = require_manager(request, institution_id)
     variant = get_scoped(SignVariant.objects, institution_id, variant_id, "Variant not found")
+    variant_id = variant.pk
     try:
         with transaction.atomic():
             variant.delete()
@@ -345,7 +353,7 @@ def delete_variant(request, institution_id: int, variant_id: int):
                 institution=institution,
                 event_type="vocabulary.variant.deleted",
                 subject_type="variant",
-                subject_id=str(variant_pk),
+                subject_id=str(variant_id),
                 metadata={},
             )
     except IntegrityError:

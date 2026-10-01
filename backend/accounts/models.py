@@ -70,6 +70,33 @@ class Membership(models.Model):
         ]
 
 
+class AccessEntitlement(models.Model):
+    class Origin(models.TextChoices):
+        FREE = "free", "Free"
+        PLUS = "plus", "Plus"
+        ENTERPRISE_ACCESS = "enterprise_access", "Enterprise access"
+
+    user = models.ForeignKey("accounts.User", null=True, blank=True, on_delete=models.PROTECT, related_name="access_entitlements")
+    institution = models.ForeignKey("accounts.Institution", null=True, blank=True, on_delete=models.PROTECT, related_name="access_entitlements")
+    origin = models.CharField(max_length=32, choices=Origin.choices, default=Origin.FREE)
+    capabilities = models.JSONField(default=dict, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=(models.Q(user__isnull=False, institution__isnull=True) | models.Q(user__isnull=True, institution__isnull=False)),
+                name="access_entitlement_one_owner",
+            ),
+            models.UniqueConstraint(fields=("user",), condition=models.Q(user__isnull=False), name="unique_user_access_entitlement"),
+            models.UniqueConstraint(fields=("institution",), condition=models.Q(institution__isnull=False), name="unique_institution_access_entitlement"),
+            models.CheckConstraint(
+                condition=models.Q(origin__in=("free", "plus", "enterprise_access")),
+                name="access_entitlement_origin_valid",
+            ),
+        ]
+
+
 class ConsentRecord(models.Model):
     class Action(models.TextChoices):
         GRANT = "grant", "Grant"

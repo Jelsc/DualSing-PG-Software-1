@@ -1,12 +1,18 @@
 # Backend identity and vocabulary API
 
-Phase 1 supplies identity, institution membership, tenant authorization, consent history, and append-only audit events. Phase 2 adds a bounded LSB vocabulary catalog and an internal SignPlan representation. It does not supply a renderer, language grammar, or translation service.
+Phase 1 supplies identity, institution membership, tenant authorization, consent history, and append-only audit events. Phase 2 adds a bounded LSB vocabulary catalog and an internal SignPlan representation. The active Phase 6/8/9 MVP adds controlled communication, synthetic practice, pilot enrollment, aggregate reporting, and company pilot-cohort management in `/portal`. It does not supply a renderer, language grammar, or translation service.
 
 ## Quick path
 
 1. Compose applies migrations when the backend starts. For an already-running stack, run `docker compose exec -T backend python manage.py migrate`.
 2. A web vocabulary manager signs in through `/api/web/login`, keeps the session cookie, fetches `/api/web/csrf`, and sends `X-CSRFToken` on every vocabulary write.
 3. Vocabulary endpoints live under `/api/vocabulary/{institution_id}`; Flutter read-only endpoints use `/api/mobile/vocabulary/{institution_id}` with a bearer access JWT.
+
+## Mobile authentication
+
+`POST /api/mobile/token` accepts `{ "email", "password" }` and returns `{ "access", "refresh", "token_type": "Bearer" }`. `POST /api/mobile/register` accepts `{ "email", "password", "password_confirmation" }` and returns the same token shape after Django email and password validation. Duplicate email returns `409`; invalid input returns `422`; login failures return `401`. Refresh and revoke remain `/api/mobile/token/refresh` and `/api/mobile/token/revoke`.
+
+Registration creates a personal `User` with a hashed password and an audit event only. It never creates `Membership` or `AccessEntitlement`; institution membership and enterprise access are granted separately by authorized flows. The endpoint is public and does not alter CSRF-protected browser routes. Password reset, SSO, domain validation, and Play Billing are not implemented or implied.
 
 ## Catalog and SignPlan
 
@@ -25,7 +31,7 @@ Phase 1 supplies identity, institution membership, tenant authorization, consent
 
 Signs and plans begin as `draft`. `POST .../{id}/review` moves a draft to `in_review`; `POST .../{id}/validate` publishes an in-review record; `POST .../{id}/reject` rejects an in-review record; and `POST .../{id}/reopen` returns a rejected record to draft. Other transitions return `409`.
 
-A plan can be published only when it has at least one item, its concept belongs to the same institution, every referenced sign is validated, optional variants belong to the referenced signs, and all marker positions are within the ordered sequence. Plans with cross-institution references are rejected by both the API and PostgreSQL composite foreign keys. Catalog codes, alias normalization, and per-plan ordering have database constraints.
+A plan can be published only when it has at least one item, its concept belongs to the same institution, every referenced sign is validated, optional variants belong to the referenced signs, and all marker positions are within the ordered sequence. The API scopes lookups and validates related records against the requested institution; database constraints cover catalog codes, alias normalization, and per-plan ordering, but PostgreSQL does not enforce cross-institution plan references with composite foreign keys.
 
 ## API shape
 
@@ -54,9 +60,23 @@ Admin catalog routes also provide scoped list, patch, delete, and lifecycle acti
 
 Role and tenant checks reuse `accounts.policies`; JWT role claims are not trusted. Admin CRUD uses Django sessions and CSRF. Mobile endpoints use live-user JWT auth and are read-only.
 
+## Communication, practice, and pilots MVP
+
+The active JWT-protected routes live under `/api/mobile/mvp/{institution_id}`. Communication accepts only exact controlled intent/alias input and returns `unsupported_input`, `missing_plan`, or `missing_clip_mapping`. Practice only exposes activities whose institution, plan, concept, and sign relationships agree; attempts require active membership and consent where configured. `GET /api/mobile/mvp/{institution_id}/pilots/cohorts` returns only safe metadata for planned/active cohorts visible to the authenticated member, including whether that user is enrolled. Closed cohorts are excluded and reject enrollment. Institution administrators create cohorts, assign validated plans/activities, and manage participant rosters through the session-authenticated `/api/portal/{institution_id}` endpoints: members are listed by safe identifier, enrollment is idempotent, and deactivation preserves the participant and audit history. Institution administrators and vocabulary reviewers can read `/cohorts/{cohort_id}/progress`, which returns aggregate synthetic MVP metrics plus safe operational participant rows. Historical enrollment counts include inactive records; active totals and completion exclude inactive participants. Assignment and progress routes are tenant-scoped, reject cross-tenant or unvalidated IDs, and never return credentials, tokens, videos, raw attempts, raw payloads, or unrestricted event data. Flutter continues consuming assigned/enrolled cohorts through the mobile API. The internal `/backoffice` remains a DualSign operations surface, not the company cohort manager.
+
+Reports filter participants, attempts, and selected activities to the cohort institution, even when no activity selection is supplied. Portal progress and `GET /api/portal/{institution_id}/cohorts/{cohort_id}/progress/export` are controlled aggregate/synthetic MVP reports only: completion means an active participant attempted every assigned validated activity within the cohort window. CSV export uses a fixed column order, includes cohort aggregates plus only the authorized institutional identifier and aggregate participant progress, and returns a stable header plus one aggregate row for an empty cohort. Formula-like text is neutralized for spreadsheet safety. Latency is exposed only as p50/p95 aggregate values and per-participant average latency. Advanced analytics, raw media, raw attempt payloads, passwords, tokens, and unrestricted event exploration are not implemented or exported. Practice uses a synthetic scaffold and preserves `UNKNOWN`; no camera recognition, real avatar assets, real dataset, or Stripe is included.
+
 ## Audit and future boundaries
 
-Catalog create/edit/delete and lifecycle actions append `AuditRecord` events with actor, institution, subject ID, and status only. No credentials, token values, marker payloads, aliases, video, conversation text, or unnecessary personal data are logged. Phase 2 does not include the Phase 3 admin UI, free-text translation/LLM, grammar/transliteration, datasets, renderer integration, Babylon, GLB, Unity, video, or animation clips.
+Catalog create/edit/delete, lifecycle actions, and pilot enrollment append `AuditRecord` events with actor, institution, subject ID, and status only. No credentials, token values, marker payloads, aliases, video, conversation text, or unnecessary personal data are logged. Free-text translation/LLM, grammar/transliteration, datasets, renderer integration, Babylon, GLB, Unity, video, animation clips, and billing remain out of scope.
+
+The original MVP copies remain under `../experimental/backend_mvp/` and `../experimental/mobile_mvp/` until verification is complete. React/Flutter consumers must continue to rely on backend policy checks; enterprise access remains represented by institution-owned `AccessEntitlement` and is never granted from client input.
+
+## Stripe billing
+
+`POST /api/mobile/billing/plus/checkout` creates an individual Plus hosted Checkout Session for a JWT user. The session URL is returned to Flutter. `GET /api/mobile/billing/status` returns the effective server entitlement. Session-authenticated portal users can read `/api/billing/status`; active institution administrators can use `POST /api/billing/enterprise/{institution_id}/checkout`. The read-only backoffice boundary includes billing status but cannot create checkout sessions.
+
+Stripe sends lifecycle events to `POST /api/billing/webhook`. The endpoint verifies the `Stripe-Signature` against the raw request body and deduplicates event IDs. It handles `checkout.session.completed`, `invoice.paid`, `invoice.payment_failed`, `customer.subscription.updated`, and `customer.subscription.deleted`. Missing test configuration returns `503`; no fake paid state is created. Tests mock Stripe and make no live calls. Hosted Checkout is intentional for this Android MVP; Play Billing migration is required for Google Play distribution.
 
 ## Docker checks
 

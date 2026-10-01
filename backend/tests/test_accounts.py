@@ -1,7 +1,7 @@
 from django.test import Client, TestCase
 from ninja_jwt.tokens import AccessToken
 
-from accounts.models import AuditRecord, ConsentRecord, Institution, Membership, User
+from accounts.models import AccessEntitlement, AuditRecord, ConsentRecord, Institution, Membership, User
 
 
 class IdentityAndTenantTests(TestCase):
@@ -110,6 +110,67 @@ class IdentityAndTenantTests(TestCase):
             401,
         )
 
+    def test_mobile_registration_returns_tokens_without_membership_or_entitlement(self):
+        response = self.client.post(
+            "/api/mobile/register",
+            {
+                "email": "New.User@Example.Test",
+                "password": "new-strong-password-123",
+                "password_confirmation": "new-strong-password-123",
+            },
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        user = User.objects.get(email="new.user@example.test")
+        self.assertTrue(user.check_password("new-strong-password-123"))
+        self.assertEqual(user.memberships.count(), 0)
+        self.assertEqual(user.access_entitlements.count(), 0)
+        self.assertNotIn("password", response.content.decode().lower())
+        self.assertEqual(
+            self.client.get(
+                "/api/mobile/me",
+                HTTP_AUTHORIZATION=f"Bearer {response.json()['access']}",
+            ).json()["memberships"],
+            [],
+        )
+
+    def test_mobile_registration_rejects_duplicate_and_invalid_input(self):
+        duplicate = self.client.post(
+            "/api/mobile/register",
+            {
+                "email": self.member.email,
+                "password": "new-strong-password-123",
+                "password_confirmation": "new-strong-password-123",
+            },
+            content_type="application/json",
+        )
+        self.assertEqual(duplicate.status_code, 409)
+        invalid = self.client.post(
+            "/api/mobile/register",
+            {
+                "email": "not-an-email",
+                "password": "short",
+                "password_confirmation": "different",
+            },
+            content_type="application/json",
+        )
+        self.assertEqual(invalid.status_code, 422)
+
+    def test_mobile_login_returns_tokens_and_rejects_bad_password(self):
+        response = self.client.post(
+            "/api/mobile/token",
+            {"email": self.member.email, "password": "correct-horse"},
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(set(response.json()), {"access", "refresh", "token_type"})
+        rejected = self.client.post(
+            "/api/mobile/token",
+            {"email": self.member.email, "password": "wrong"},
+            content_type="application/json",
+        )
+        self.assertEqual(rejected.status_code, 401)
+
     def test_expired_jwt_and_inactive_users_are_denied(self):
         token = AccessToken.for_user(self.member)
         token["exp"] = 0
@@ -192,3 +253,32 @@ class IdentityAndTenantTests(TestCase):
             consent.delete()
         with self.assertRaises(ValueError):
             audit.delete()
+
+    def test_backoffice_boundary_requires_platform_staff(self):
+        self.client.force_login(self.member)
+        self.assertEqual(self.client.get("/api/web/backoffice/boundary").status_code, 403)
+
+        root = User.objects.create_superuser("root-boundary@example.test", "root-test-password")
+        self.client.force_login(root)
+        response = self.client.get("/api/web/backoffice/boundary")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["audience"], "dualsign_backoffice")
+
+    def test_portal_boundary_requires_active_membership_and_returns_entitlement_shape(self):
+        self.client.force_login(self.member)
+        own = self.client.get(f"/api/web/portal/{self.institution_a.id}/boundary")
+        foreign = self.client.get(f"/api/web/portal/{self.institution_b.id}/boundary")
+        self.assertEqual(own.status_code, 200)
+        self.assertEqual(own.json(), {
+            "origin": "free",
+            "capabilities": {"mobile_access": True, "plus_features": False, "enterprise_features": False},
+        })
+        self.assertEqual(foreign.status_code, 404)
+
+        AccessEntitlement.objects.create(user=self.member, origin=AccessEntitlement.Origin.ENTERPRISE_ACCESS)
+        enterprise = self.client.get(f"/api/web/portal/{self.institution_a.id}/boundary")
+        self.assertEqual(enterprise.json()["origin"], "enterprise_access")
+        self.assertTrue(enterprise.json()["capabilities"]["enterprise_features"])
+
+        Membership.objects.filter(user=self.member, institution=self.institution_a).update(is_active=False)
+        self.assertEqual(self.client.get(f"/api/web/portal/{self.institution_a.id}/boundary").status_code, 404)

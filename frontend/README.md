@@ -1,4 +1,16 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# DualSign Frontend
+
+The frontend has three explicit web surfaces:
+
+| Route | Audience | Scope |
+| --- | --- | --- |
+| `/` | Everyone | Product surface index linking to the portal and internal shell |
+| `/portal` | Company members | Session and CSRF protected, institution-scoped vocabulary and pilot-cohort workbench |
+| `/backoffice` | DualSign staff | Internal operations shell with honest placeholders for future platform tooling |
+
+Flutter remains the consumer/mobile client for Free, Plus, and enterprise-provisioned access. The portal displays effective billing status and institution administrators can open hosted Stripe Checkout for Enterprise. Backoffice billing is read-only. Access origin is represented by the backend, with no SSO or automatic email-domain validation. Use Stripe test-mode placeholders and mocked backend tests only; Google Play distribution later requires Play Billing migration.
+
+Institution administrators create, activate, and close pilot cohorts in `/portal`, then manage active institution members in each participant roster. Roster data is limited to authorized institutional identifiers, enrollment lifecycle, consent state, and existing aggregate cohort reports; raw attempts are not shown. Flutter continues selecting assigned/enrolled cohorts and reporting through the server-backed mobile API. `/backoffice` remains for internal DualSign operations. The MVP is intentionally synthetic: no camera recognition, real avatar assets, real dataset, advanced analytics, or ML accuracy claim is bundled. Pilot reports are aggregate diagnostics.
 
 ## Getting Started
 

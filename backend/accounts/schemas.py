@@ -8,6 +8,12 @@ class CredentialsIn(Schema):
     password: str
 
 
+class RegistrationIn(Schema):
+    email: str
+    password: str
+    password_confirmation: str
+
+
 class RefreshIn(Schema):
     refresh: str
 
@@ -27,6 +33,11 @@ class MembershipOut(Schema):
     institution_id: int
     institution_name: str
     role: str
+
+
+class AccessEntitlementOut(Schema):
+    origin: str
+    capabilities: dict[str, bool]
 
 
 class InstitutionOut(Schema):

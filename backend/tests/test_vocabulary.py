@@ -10,6 +10,7 @@ from vocabulary.models import (
     SignConcept,
     SignPlan,
     SignPlanItem,
+    SignVariant,
 )
 
 
@@ -288,6 +289,74 @@ class VocabularyApiTests(TestCase):
         alias_audit = AuditRecord.objects.get(event_type="vocabulary.alias.created")
         self.assertEqual(alias_audit.metadata, {"status": ""})
         self.assertNotIn("alias", str(alias_audit.metadata))
+
+    def test_admin_variant_listing_delete_constraints_and_tenant_scope(self):
+        concept = self.create_concept()
+        sign = self.create_sign(concept["id"])
+        variant = SignVariant.objects.create(
+            institution=self.institution,
+            sign_id=sign["id"],
+            variant_code="regional-a",
+            label="Regional form",
+            hamnosys="opaque notation",
+        )
+        list_path = f"{self.root}/signs/{sign['id']}/variants"
+        listed = self.client.get(list_path)
+        self.assertEqual(listed.status_code, 200, listed.content)
+        self.assertEqual(listed.json(), [{
+            "id": variant.id,
+            "sign_id": sign["id"],
+            "variant_code": "regional-a",
+            "label": "Regional form",
+            "hamnosys": "opaque notation",
+        }])
+
+        plan = SignPlan.objects.create(
+            institution=self.institution,
+            concept_id=concept["id"],
+            code="variant-reference",
+        )
+        SignPlanItem.objects.create(
+            institution=self.institution,
+            plan=plan,
+            sign_id=sign["id"],
+            variant=variant,
+            position=0,
+        )
+        blocked = self.client.delete(f"{self.root}/variants/{variant.id}")
+        self.assertEqual(blocked.status_code, 409, blocked.content)
+
+        SignPlanItem.objects.filter(plan=plan, variant=variant).delete()
+        deleted = self.client.delete(f"{self.root}/variants/{variant.id}")
+        self.assertEqual(deleted.status_code, 204, deleted.content)
+        self.assertFalse(SignVariant.objects.filter(pk=variant.id).exists())
+        self.assertTrue(AuditRecord.objects.filter(
+            institution=self.institution,
+            event_type="vocabulary.variant.deleted",
+            subject_id=str(variant.id),
+        ).exists())
+
+        foreign_concept = SignConcept.objects.create(
+            institution=self.other_institution,
+            code="foreign-variant-concept",
+            label="Foreign variant concept",
+        )
+        foreign_sign = Sign.objects.create(
+            institution=self.other_institution,
+            concept=foreign_concept,
+            sign_id="foreign-variant-sign",
+            gloss="Foreign variant sign",
+        )
+        foreign_variant = SignVariant.objects.create(
+            institution=self.other_institution,
+            sign=foreign_sign,
+            variant_code="foreign",
+        )
+        foreign_sign_list = self.client.get(f"{self.root}/signs/{foreign_sign.id}/variants")
+        foreign_delete = self.client.delete(f"{self.root}/variants/{foreign_variant.id}")
+        self.assertEqual(foreign_sign_list.status_code, 404)
+        self.assertEqual(foreign_delete.status_code, 404)
+        self.assertTrue(SignVariant.objects.filter(pk=foreign_variant.id).exists())
 
     def test_review_and_publish_append_status_only_audit_events(self):
         concept = self.create_concept()
