@@ -12,8 +12,121 @@ import 'package:dualsign_mobile/features/mvp/practice_repository.dart';
 import 'package:dualsign_mobile/features/mvp/report_repository.dart';
 import 'package:dualsign_mobile/features/workspace/app_section.dart';
 import 'package:dualsign_mobile/features/workspace/workspace_state.dart';
+import 'package:dualsign_mobile/features/mvp/mvp_screens.dart';
+import 'package:dualsign_mobile/features/billing/billing_repository.dart';
 
 void main() {
+  testWidgets('single membership can switch cohorts on a narrow screen', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final container = ProviderContainer(
+      overrides: [
+        sessionBootstrapProvider.overrideWith(
+          (ref) async => const AppSession(
+            baseUrl: 'https://api.test/api/',
+            accessToken: 'jwt',
+            cohortId: 9,
+            memberships: [
+              InstitutionMembership(
+                institutionId: 7,
+                institutionName: 'One institution',
+                role: 'operator',
+              ),
+            ],
+          ),
+        ),
+        cohortRepositoryProvider.overrideWithValue(_MultipleCohorts()),
+      ],
+    );
+    addTearDown(container.dispose);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: const DualSignMobileApp(),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(DropdownButton<int>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Second cohort').last);
+    await tester.pumpAndSettle();
+    expect(container.read(pilotSelectionProvider).valueOrNull!.cohortId, 10);
+    expect(tester.takeException(), isNull);
+  });
+  testWidgets('personal account can reach Profile without membership', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          sessionBootstrapProvider.overrideWith(
+            (ref) async => const AppSession(
+              baseUrl: 'https://api.test/api/',
+              accessToken: 'jwt',
+            ),
+          ),
+          billingRepositoryProvider.overrideWithValue(null),
+        ],
+        child: const DualSignMobileApp(),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Personal workspace'), findsOneWidget);
+    await tester.tap(find.text(AppSection.profile.label).last);
+    await tester.pumpAndSettle();
+    expect(find.text('Tu información personal'), findsOneWidget);
+    expect(find.text('Sign out'), findsOneWidget);
+  });
+
+  testWidgets(
+    'practice selects another activity and records explicit grant and withdrawal',
+    (tester) async {
+      final actions = <String>[];
+      final practice = _SelectablePractice();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: PracticeScreen(
+              repository: practice,
+              consent: (action) async {
+                actions.add(action);
+              },
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<FilledButton>(find.byType(FilledButton)).onPressed,
+        isNull,
+      );
+      await tester.tap(find.byType(DropdownButtonFormField<int>));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('SECOND').last);
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.byType(CheckboxListTile));
+      await tester.tap(find.byType(CheckboxListTile));
+      await tester.pumpAndSettle();
+      expect(actions, ['grant']);
+      await tester.ensureVisible(find.byType(FilledButton));
+      await tester.tap(find.byType(FilledButton));
+      await tester.pumpAndSettle();
+      expect(practice.submitted, 2);
+      await tester.ensureVisible(find.byType(CheckboxListTile));
+      await tester.tap(find.byType(CheckboxListTile));
+      await tester.pumpAndSettle();
+      expect(actions, ['grant', 'withdraw']);
+      expect(
+        tester.widget<FilledButton>(find.byType(FilledButton)).onPressed,
+        isNull,
+      );
+    },
+  );
+
   testWidgets('shows an explicit unauthenticated state', (tester) async {
     await tester.pumpWidget(
       ProviderScope(
@@ -51,9 +164,7 @@ void main() {
               ],
             ),
           ),
-          cohortRepositoryProvider.overrideWithValue(
-            _FakeCohorts(),
-          ),
+          cohortRepositoryProvider.overrideWithValue(_FakeCohorts()),
           mvpRepositoriesProvider.overrideWithValue(repositories),
         ],
         child: const DualSignMobileApp(),
@@ -150,6 +261,29 @@ class _FakePractice implements PracticeRepository {
   );
 }
 
+class _SelectablePractice extends _FakePractice {
+  int? submitted;
+  @override
+  Future<List<PracticeActivity>> listActivities() async => [
+    ...(await super.listActivities()),
+    const PracticeActivity(
+      id: 2,
+      prompt: 'SECOND',
+      signId: 'second',
+      modelVersion: 'synthetic-v1',
+    ),
+  ];
+  @override
+  Future<PracticeResult> submit(
+    PracticeActivity activity,
+    String result, {
+    int? latencyMs,
+  }) {
+    submitted = activity.id;
+    return super.submit(activity, result, latencyMs: latencyMs);
+  }
+}
+
 class _FakeReport implements ReportRepository {
   @override
   Future<PilotReport> load() async => const PilotReport(
@@ -177,6 +311,22 @@ class _FakeCohorts implements CohortRepository {
     PilotCohort(
       id: 9,
       name: 'Pilot cohort',
+      startDate: DateTime(2026),
+      endDate: null,
+      status: 'planned',
+      consentRequired: true,
+      enrolled: false,
+    ),
+  ];
+}
+
+class _MultipleCohorts extends _FakeCohorts {
+  @override
+  Future<List<PilotCohort>> list(int institutionId) async => [
+    ...(await super.list(institutionId)),
+    PilotCohort(
+      id: 10,
+      name: 'Second cohort',
       startDate: DateTime(2026),
       endDate: null,
       status: 'planned',

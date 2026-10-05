@@ -10,12 +10,13 @@ from ninja.security import django_auth
 from accounts.models import AuditRecord, User, Membership
 from accounts.policies import can_manage_pilots, can_view_institution
 from accounts.security import require_csrf
-from vocabulary.models import ReviewStatus, SignPlan
+from vocabulary.models import ReviewStatus, SignPlan, Sign
 
 from .api import pilot_report
 from .models import PilotCohort, PilotParticipant, PracticeActivity, PracticeAttempt
 from .schemas import PortalAssignmentIn, PortalAssignmentOut, PortalEnrollmentIn, PortalMemberOut, PortalParticipantOut, PortalProgressOut, PilotCohortDetailOut, PilotCohortIn, PilotCohortPatch, PilotCohortOut
 from .services import has_consent, percentile
+from .schemas import PortalActivityIn
 
 portal = Router(auth=django_auth)
 
@@ -47,6 +48,30 @@ def require_progress_viewer(request, institution_id):
     ).exists():
         raise HttpError(403, "Institution administrator or vocabulary reviewer required")
     return institution
+
+
+@portal.post("/{institution_id}/activities", response={201: dict})
+@transaction.atomic
+def create_portal_activity(request, institution_id: int, payload: PortalActivityIn):
+    require_pilot_manager(request, institution_id)
+    require_csrf(request)
+    plan = SignPlan.objects.select_for_update().filter(
+        pk=payload.plan_id, institution_id=institution_id,
+        concept__institution_id=institution_id, status=ReviewStatus.VALIDATED,
+    ).first()
+    sign = Sign.objects.select_for_update().filter(
+        pk=payload.sign_id, institution_id=institution_id,
+        concept__institution_id=institution_id, status=ReviewStatus.VALIDATED,
+    ).first()
+    if plan is None or sign is None:
+        raise HttpError(422, "Select a validated plan and sign from this institution")
+    activity = PracticeActivity.objects.create(institution_id=institution_id, plan=plan, sign=sign)
+    AuditRecord.objects.create(
+        actor=request.auth, institution_id=institution_id,
+        event_type="mvp.practice_activity_created", subject_type="practice_activity",
+        subject_id=str(activity.id), metadata={"plan_id": plan.id, "sign_id": sign.id},
+    )
+    return 201, {"id": activity.id, "prompt": sign.gloss, "plan_id": plan.id}
 
 
 def validate_selection(institution_id, plan_ids, activity_ids):

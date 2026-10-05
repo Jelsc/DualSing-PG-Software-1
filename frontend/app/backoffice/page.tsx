@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import Link from "next/link";
 
-import { ApiError, BillingStatus, billingLabel, request } from "../api";
+import { ApiError, BillingStatus, billingLabel, refreshCsrf, request } from "../api";
 
 const sections = [
   ["Institutions", "Workspace registry and tenant status. Full management remains behind the protected platform boundary."],
@@ -14,8 +14,11 @@ const sections = [
 ];
 
 export default function BackofficePage() {
-  const [boundary, setBoundary] = useState<"loading" | "authorized" | "denied" | "error">("loading");
+  const [boundary, setBoundary] = useState<"loading" | "authorized" | "anonymous" | "denied" | "error">("loading");
   const [billing, setBilling] = useState<BillingStatus | null>(null);
+  const [attempt, setAttempt] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     let active = true;
@@ -23,10 +26,34 @@ export default function BackofficePage() {
       .then((response) => { if (active) { setBilling(response.billing); setBoundary("authorized"); } })
       .catch((error: unknown) => {
         if (!active) return;
-        setBoundary(error instanceof ApiError && error.status === 403 ? "denied" : "error");
+        setBoundary(error instanceof ApiError && error.status === 401 ? "anonymous" : error instanceof ApiError && error.status === 403 ? "denied" : "error");
       });
     return () => { active = false; };
-  }, []);
+  }, [attempt]);
+
+  async function login(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    setBusy(true); setError("");
+    try {
+      await refreshCsrf();
+      await request("/web/login", { method: "POST", body: JSON.stringify({ email: form.get("email"), password: form.get("password") }) });
+      setBoundary("loading"); setAttempt((value) => value + 1);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Sign in failed. Try again.");
+    } finally { setBusy(false); }
+  }
+
+  async function logout() {
+    setBusy(true); setError("");
+    try {
+      await refreshCsrf();
+      await request("/web/logout", { method: "POST" });
+      setBilling(null); setBoundary("anonymous");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Sign out failed. Try again.");
+    } finally { setBusy(false); }
+  }
 
   if (boundary === "loading") {
     return <main className="gate"><p role="status">Checking platform staff access…</p></main>;
@@ -36,8 +63,16 @@ export default function BackofficePage() {
     return (
       <main className="gate">
         <Link className="brand" href="/"><span className="brand__mark">DS</span><span className="brand__text"><strong>DualSign</strong><span>INTERNAL BACKOFFICE</span></span></Link>
-        <h1>{boundary === "denied" ? "Platform staff access required" : "Backoffice unavailable"}</h1>
-        <p className="subtle">{boundary === "denied" ? "This surface is reserved for authorized DualSign staff." : "The protected access check could not be completed."}</p>
+        <h1>{boundary === "anonymous" ? "Sign in to the internal backoffice" : boundary === "denied" ? "Platform staff access required" : "Backoffice unavailable"}</h1>
+        <p className="subtle">{boundary === "anonymous" ? "Use your authorized DualSign staff account." : boundary === "denied" ? "This surface is reserved for authorized DualSign staff." : "The protected access check could not be completed."}</p>
+        {error && <p className="alert alert--error" role="alert">{error}</p>}
+        {boundary === "anonymous" && <form className="form-stack login-form" onSubmit={login}>
+          <label className="form-field"><span className="field-label">Email</span><input name="email" type="email" autoComplete="username" required /></label>
+          <label className="form-field"><span className="field-label">Password</span><input name="password" type="password" autoComplete="current-password" required /></label>
+          <button className="button button--primary" disabled={busy}>{busy ? "Signing in…" : "Sign in"}</button>
+        </form>}
+        {boundary === "denied" && <button className="button button--secondary" disabled={busy} onClick={() => void logout()}>Sign out and use another account</button>}
+        {boundary === "error" && <button className="button button--secondary" onClick={() => { setBoundary("loading"); setAttempt((value) => value + 1); }}>Retry access check</button>}
         <Link className="button button--quiet" href="/">Return to product surfaces</Link>
       </main>
     );
@@ -48,7 +83,9 @@ export default function BackofficePage() {
       <header className="surface-header">
         <Link className="brand" href="/"><span className="brand__mark">DS</span><span className="brand__text"><strong>DualSign</strong><span>INTERNAL BACKOFFICE</span></span></Link>
         <Link className="button button--quiet" href="/portal">Company portal</Link>
+        <button className="button button--quiet" disabled={busy} onClick={() => void logout()}>Sign out</button>
       </header>
+      {error && <p className="alert alert--error" role="alert">{error}</p>}
       <section className="backoffice-intro">
         <p className="kicker">PLATFORM OPERATIONS</p>
         <h1>Internal DualSign backoffice</h1>

@@ -7,6 +7,11 @@ class ResolveIn(Schema):
     input: str
 
 
+class PortalActivityIn(Schema):
+    plan_id: int
+    sign_id: int
+
+
 class CommunicationStepOut(Schema):
     position: int
     stable_sign_id: str

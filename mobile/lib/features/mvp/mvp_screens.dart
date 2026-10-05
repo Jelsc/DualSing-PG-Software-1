@@ -118,8 +118,9 @@ class _CommunicationScreenState extends State<CommunicationScreen> {
 }
 
 class PracticeScreen extends StatefulWidget {
-  const PracticeScreen({super.key, required this.repository});
+  const PracticeScreen({super.key, required this.repository, this.consent});
   final PracticeRepository repository;
+  final Future<void> Function(String action)? consent;
 
   @override
   State<PracticeScreen> createState() => _PracticeScreenState();
@@ -127,6 +128,8 @@ class PracticeScreen extends StatefulWidget {
 
 class _PracticeScreenState extends State<PracticeScreen> {
   PracticeActivity? activity;
+  List<PracticeActivity> activities = [];
+  bool consentConfirmed = false;
   PracticeResult? result;
   String selectedResult = 'unknown';
   String? error;
@@ -139,10 +142,15 @@ class _PracticeScreenState extends State<PracticeScreen> {
   }
 
   Future<void> load() async {
+    setState(() {
+      loading = true;
+      error = null;
+    });
     try {
       final rows = await widget.repository.listActivities();
       if (mounted)
         setState(() {
+          activities = rows;
           activity = rows.isEmpty ? null : rows.first;
           loading = false;
         });
@@ -171,6 +179,25 @@ class _PracticeScreenState extends State<PracticeScreen> {
     }
   }
 
+  Future<void> recordConsent(bool granted) async {
+    setState(() {
+      loading = true;
+      error = null;
+    });
+    try {
+      await widget.consent!(granted ? 'grant' : 'withdraw');
+      if (mounted) setState(() => consentConfirmed = granted);
+    } catch (_) {
+      if (mounted)
+        setState(
+          () => error =
+              'No se pudo guardar el consentimiento. Inténtalo de nuevo.',
+        );
+    } finally {
+      if (mounted) setState(() => loading = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     if (loading && activity == null)
@@ -178,9 +205,19 @@ class _PracticeScreenState extends State<PracticeScreen> {
     if (activity == null)
       return Padding(
         padding: const EdgeInsets.all(24),
-        child: Text(
-          error ??
-              'No hay actividades validadas para la institución configurada.',
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              error ??
+                  'No hay actividades validadas para la institución configurada.',
+            ),
+            const SizedBox(height: 12),
+            OutlinedButton(
+              onPressed: load,
+              child: const Text('Volver a cargar'),
+            ),
+          ],
         ),
       );
     return Padding(
@@ -189,10 +226,32 @@ class _PracticeScreenState extends State<PracticeScreen> {
         children: [
           Text('Practicar', style: Theme.of(context).textTheme.headlineSmall),
           const SizedBox(height: 8),
+          DropdownButtonFormField<int>(
+            initialValue: activity!.id,
+            decoration: const InputDecoration(labelText: 'Actividad'),
+            isExpanded: true,
+            items: activities
+                .map(
+                  (item) => DropdownMenuItem(
+                    value: item.id,
+                    child: Text(item.prompt, overflow: TextOverflow.ellipsis),
+                  ),
+                )
+                .toList(),
+            onChanged: loading
+                ? null
+                : (id) => setState(() {
+                    activity = activities.firstWhere((item) => item.id == id);
+                    result = null;
+                    error = null;
+                    selectedResult = 'unknown';
+                  }),
+          ),
           Text(activity!.prompt),
           Text('Manual/synthetic evaluation · model ${activity!.modelVersion}'),
           const SizedBox(height: 16),
           DropdownButtonFormField<String>(
+            key: ValueKey(activity!.id),
             value: selectedResult,
             decoration: const InputDecoration(labelText: 'Manual result'),
             items: const [
@@ -205,8 +264,25 @@ class _PracticeScreenState extends State<PracticeScreen> {
                 : (value) => setState(() => selectedResult = value!),
           ),
           const SizedBox(height: 12),
+          if (widget.consent != null) ...[
+            const Text(
+              'Consentimiento de práctica piloto · v1. Se guardarán tus resultados manuales asociados a tu cuenta para el seguimiento del piloto. Esta práctica sintética no captura cámara, audio ni gestos reales.',
+            ),
+            CheckboxListTile(
+              value: consentConfirmed,
+              title: const Text(
+                'Autorizo el registro de mis resultados de práctica',
+              ),
+              subtitle: const Text(
+                'Desmarca para registrar la revocación del consentimiento.',
+              ),
+              onChanged: loading ? null : (value) => recordConsent(value!),
+            ),
+          ],
           FilledButton(
-            onPressed: loading ? null : submit,
+            onPressed: loading || (widget.consent != null && !consentConfirmed)
+                ? null
+                : submit,
             child: Text(loading ? 'Submitting...' : 'Submit manual result'),
           ),
           if (error != null)

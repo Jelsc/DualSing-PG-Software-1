@@ -50,32 +50,58 @@ class MvpRepositories {
     required this.practice,
     required this.report,
     required this.enrollment,
+    this.consent,
   });
   final CommunicationRepository communication;
   final PracticeRepository practice;
   final ReportRepository report;
   final PilotEnrollmentRepository enrollment;
+  final Future<void> Function(String action)? consent;
 
   factory MvpRepositories.http(
     Uri baseUri,
     String token, {
     required int institutionId,
     required int cohortId,
+    http.Client? client,
   }) {
     final root = baseUri.resolve('mobile/mvp/$institutionId/');
     return MvpRepositories(
+      consent: (action) async {
+        final response = await (client ?? http.Client()).post(
+          baseUri.resolve('mobile/consents'),
+          headers: {
+            'Authorization': 'Bearer $token',
+            'Content-Type': 'application/json',
+          },
+          body: jsonEncode({
+            'purpose': 'pilot_practice',
+            'policy_version': 'v1',
+            'action': action,
+          }),
+        );
+        if (response.statusCode >= 400)
+          throw http.ClientException('Consent could not be recorded.');
+      },
       communication: HttpCommunicationRepository(
         root.resolve('communication/resolve'),
         token,
+        client: client,
       ),
-      practice: HttpPracticeRepository(root.resolve('practice/'), token),
+      practice: HttpPracticeRepository(
+        root.resolve('practice/'),
+        token,
+        client: client,
+      ),
       report: HttpReportRepository(
         root.resolve('pilots/$cohortId/report'),
         token,
+        client: client,
       ),
       enrollment: HttpPilotEnrollmentRepository(
         root.resolve('pilots/$cohortId/participants'),
         token,
+        client: client,
       ),
     );
   }

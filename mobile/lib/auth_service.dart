@@ -36,8 +36,10 @@ class TokenPair {
   factory TokenPair.fromJson(Map<String, dynamic> json) {
     final access = json['access'];
     final refresh = json['refresh'];
-    if (access is! String || refresh is! String ||
-        access.trim().isEmpty || refresh.trim().isEmpty) {
+    if (access is! String ||
+        refresh is! String ||
+        access.trim().isEmpty ||
+        refresh.trim().isEmpty) {
       throw const AuthException('The server returned an invalid session.');
     }
     return TokenPair(access: access, refresh: refresh);
@@ -59,12 +61,23 @@ class AuthRepository {
   final String baseUrl;
   final SessionStorage _storage;
   final http.Client _client;
+  int _generation = 0;
+  Future<TokenPair>? _refreshing;
+  Future<void> _writes = Future.value();
+
+  int get generation => _generation;
+
+  Future<void> _serialize(Future<void> Function() action) {
+    final next = _writes.then((_) => action());
+    _writes = next.catchError((Object _) {});
+    return next;
+  }
 
   Future<TokenPair> login(String email, String password) async {
-    final pair = await _requestToken(
-      'mobile/token',
-      {'email': email.trim(), 'password': password},
-    );
+    final pair = await _requestToken('mobile/token', {
+      'email': email.trim(),
+      'password': password,
+    });
     await _persist(pair, email.trim().toLowerCase());
     return pair;
   }
@@ -74,14 +87,11 @@ class AuthRepository {
     String password,
     String confirmation,
   ) async {
-    final pair = await _requestToken(
-      'mobile/register',
-      {
-        'email': email.trim(),
-        'password': password,
-        'password_confirmation': confirmation,
-      },
-    );
+    final pair = await _requestToken('mobile/register', {
+      'email': email.trim(),
+      'password': password,
+      'password_confirmation': confirmation,
+    });
     await _persist(pair, email.trim().toLowerCase());
     return pair;
   }
@@ -97,46 +107,84 @@ class AuthRepository {
   Future<String?> storedEmail() => _storage.read(emailKey);
 
   Future<TokenPair> refresh(String refreshToken) async {
-    final pair = await _requestToken(
-      'mobile/token/refresh',
-      {'refresh': refreshToken},
-    );
-    await _persist(pair, await storedEmail());
-    return pair;
+    if (_refreshing != null) return _refreshing!;
+    final epoch = _generation;
+    final pending = () async {
+      final pair = await _requestToken('mobile/token/refresh', {
+        'refresh': refreshToken,
+      });
+      await _serialize(() async {
+        if (epoch != _generation) throw const AuthException('Session ended.');
+        await _persist(pair, await storedEmail());
+      });
+      if (epoch != _generation) throw const AuthException('Session ended.');
+      return pair;
+    }();
+    _refreshing = pending;
+    try {
+      return await pending;
+    } on AuthException catch (error) {
+      if ((error.status == 401 || error.status == 403) &&
+          epoch == _generation) {
+        _generation++;
+        await _serialize(() async {
+          await Future.wait([
+            _storage.delete(accessKey),
+            _storage.delete(refreshKey),
+            _storage.delete(emailKey),
+          ]);
+        });
+      }
+      rethrow;
+    } finally {
+      if (identical(_refreshing, pending)) _refreshing = null;
+    }
   }
 
   Future<void> logout({String? refreshToken}) async {
-    try {
-      if (refreshToken != null && refreshToken.isNotEmpty) {
-        await _client.post(
-          _uri('mobile/token/revoke'),
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode({'refresh': refreshToken}),
-        );
-      }
-    } finally {
+    _generation++;
+    final stored = await storedTokens();
+    await _serialize(() async {
       await Future.wait([
         _storage.delete(accessKey),
         _storage.delete(refreshKey),
         _storage.delete(emailKey),
       ]);
+    });
+    try {
+      final token = stored?.refresh ?? refreshToken;
+      if (token != null && token.isNotEmpty) {
+        await _post('mobile/token/revoke', {'refresh': token});
+      }
+    } on http.ClientException {
+      // Local logout remains effective when remote revocation is unreachable.
     }
   }
 
-  Future<TokenPair> _requestToken(String path, Map<String, String> payload) async {
-    final response = await _client.post(
-      _uri(path),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode(payload),
+  Future<TokenPair> _requestToken(
+    String path,
+    Map<String, String> payload,
+  ) async {
+    final response = await _post(path, payload);
+    if (response.statusCode >= 300) throw _mapError(response);
+    return TokenPair.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
     );
-    if (response.statusCode >= 400) throw _mapError(response);
-    return TokenPair.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  Future<http.Response> _post(String path, Map<String, String> payload) async {
+    final request = http.Request('POST', _uri(path))
+      ..followRedirects = false
+      ..headers['Content-Type'] = 'application/json'
+      ..body = jsonEncode(payload);
+    return http.Response.fromStream(await _client.send(request));
   }
 
   Future<void> _persist(TokenPair pair, String? email) async {
     await _storage.write(accessKey, pair.access);
     await _storage.write(refreshKey, pair.refresh);
-    if (email != null && email.isNotEmpty) await _storage.write(emailKey, email);
+    if (email != null && email.isNotEmpty)
+      await _storage.write(emailKey, email);
   }
 
   Uri _uri(String path) => Uri.parse(baseUrl).resolve(path);
@@ -155,13 +203,14 @@ class AuthRepository {
       409 => 'An account with that email already exists.',
       422 => message,
       _ => 'The authentication service is unavailable. Try again later.',
-    });
+    }, status: response.statusCode);
   }
 }
 
 class AuthException implements Exception {
-  const AuthException(this.message);
+  const AuthException(this.message, {this.status});
   final String message;
+  final int? status;
 
   @override
   String toString() => message;

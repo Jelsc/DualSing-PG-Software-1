@@ -50,13 +50,16 @@ class AppSession {
   Future<AppSession?> bootstrap({
     http.Client? client,
     SessionStorage? storage,
+    AuthRepository? repository,
   }) async {
     if (baseUrl.trim().isEmpty) return null;
-    final auth = AuthRepository(
-      baseUrl: baseUrl,
-      storage: storage ?? const _UnavailableStorage(),
-      client: client,
-    );
+    final auth =
+        repository ??
+        AuthRepository(
+          baseUrl: baseUrl,
+          storage: storage ?? const _UnavailableStorage(),
+          client: client,
+        );
     var token = accessToken;
     var refresh = refreshToken;
     var configuredInstitutionId = institutionId;
@@ -82,11 +85,15 @@ class AppSession {
         me = await _me(httpClient, token);
       }
       if (me.statusCode >= 400)
-        throw SessionException('Your session has expired. Please sign in again.');
+        throw SessionException(
+          'Your session has expired. Please sign in again.',
+        );
       final body = jsonDecode(me.body) as Map<String, dynamic>;
       final memberships = (body['memberships'] as List<dynamic>? ?? [])
           .cast<Map<String, dynamic>>();
-      if (!memberships.any((item) => item['institution_id'] == configuredInstitutionId))
+      if (!memberships.any(
+        (item) => item['institution_id'] == configuredInstitutionId,
+      ))
         configuredInstitutionId = null;
       return AppSession(
         baseUrl: baseUrl,
@@ -143,10 +150,21 @@ final appSessionProvider = Provider<AppSession>(
   (ref) => AppSession.fromEnvironment(),
 );
 final sessionBootstrapProvider = FutureProvider<AppSession?>(
-  (ref) => ref.read(appSessionProvider).bootstrap(
-    storage: ref.read(sessionStorageProvider),
-  ),
+  (ref) => ref
+      .read(appSessionProvider)
+      .bootstrap(
+        storage: ref.read(sessionStorageProvider),
+        repository: ref.read(authRepositoryProvider),
+      ),
 );
+
+final authRepositoryProvider = Provider<AuthRepository>((ref) {
+  final config = ref.watch(appSessionProvider);
+  return AuthRepository(
+    baseUrl: config.baseUrl,
+    storage: ref.watch(sessionStorageProvider),
+  );
+});
 
 class SessionException implements Exception {
   const SessionException(this.message);

@@ -98,7 +98,7 @@ button { color: inherit; }
 .search-field { display: flex; min-height: 42px; align-items: center; gap: 8px; margin: 16px 14px 13px; padding: 0 10px; border: 1px solid var(--rule); border-radius: 7px; background: var(--paper-raised); }
 .search-icon { color: var(--ink-quiet); font-size: 20px; line-height: 1; }
 .search-field input { min-width: 0; min-height: 38px; border: 0; outline: 0; background: transparent; font-size: 12px; }
-.search-field input:focus-visible { outline: 0; }
+.search-field input:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
 .clear-search, .icon-button { display: grid; width: 34px; height: 34px; flex: 0 0 auto; place-items: center; border: 0; border-radius: 6px; background: transparent; color: var(--ink-quiet); cursor: pointer; font-size: 20px; }
 .clear-search:hover, .icon-button:hover { background: var(--inset); color: var(--ink); }
 .list-meta { display: flex; justify-content: space-between; padding: 0 16px 10px; color: var(--ink-soft); font-size: 10px; }
@@ -228,6 +228,10 @@ button { color: inherit; }
 .assignment-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .progress-view { display: grid; gap: 14px; margin-top: 5px; }
 .progress-table { display: grid; overflow-x: auto; border-top: 1px solid var(--rule); }
+.progress-table table { width: 100%; min-width: 620px; border-collapse: collapse; text-align: left; font-size: 11px; }
+.progress-table th, .progress-table td { padding: 12px 8px; border-bottom: 1px solid var(--rule-soft); }
+.progress-table thead { color: var(--ink-quiet); }
+.cohort-workspace > .editor-panel { max-width: 720px; }
 .progress-table__row { display: grid; min-width: 620px; grid-template-columns: 1.5fr .7fr 1fr .6fr 1fr; gap: 12px; align-items: center; padding: 11px 4px; border-bottom: 1px solid var(--rule-soft); color: var(--ink-soft); font-size: 11px; }
 .progress-table__row strong { color: var(--ink); font-weight: 650; }
 .progress-table__row--head { color: var(--ink-quiet); font-size: 9px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
@@ -347,6 +351,8 @@ button { color: inherit; }
   .main-footer { padding-top: 25px; font-size: 8px; }
 }
 @media (max-width: 430px) {
+  .nav-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .nav-item { min-width: 0; min-height: 44px; }
   .brand__mark { width: 34px; height: 34px; }
   .brand__text span { font-size: 8px; }
   .page-heading { gap: 8px; }

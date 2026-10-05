@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../mvp/mvp_repositories.dart';
 import '../mvp/cohort_repository.dart';
 import '../../app_session.dart';
+import '../../auth_service.dart';
+import '../../feature_http_client.dart';
 import 'app_section.dart';
 
 final selectedSectionProvider =
@@ -33,13 +35,34 @@ final mvpRepositoriesProvider = Provider<MvpRepositories>((ref) {
     selection.session.accessToken,
     institutionId: selection.institutionId!,
     cohortId: selection.cohortId!,
+    client: ref.watch(featureHttpClientProvider),
   );
 });
 
 final cohortRepositoryProvider = Provider<CohortRepository>((ref) {
   final session = ref.watch(sessionBootstrapProvider).valueOrNull;
   if (session == null) return _UnavailableCohortRepository();
-  return HttpCohortRepository(Uri.parse(session.baseUrl), session.accessToken);
+  return HttpCohortRepository(
+    Uri.parse(session.baseUrl),
+    session.accessToken,
+    client: ref.watch(featureHttpClientProvider),
+  );
+});
+
+final featureHttpClientProvider = Provider<FeatureHttpClient?>((ref) {
+  final session = ref.watch(sessionBootstrapProvider).valueOrNull;
+  if (session == null) return null;
+  final client = FeatureHttpClient(
+    baseUri: Uri.parse(session.baseUrl),
+    auth: ref.watch(authRepositoryProvider),
+    tokens: TokenPair(
+      access: session.accessToken,
+      refresh: session.refreshToken,
+    ),
+    onSessionExpired: () => ref.invalidate(sessionBootstrapProvider),
+  );
+  ref.onDispose(client.close);
+  return client;
 });
 
 enum PilotSelectionStatus {

@@ -56,7 +56,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
   Future<void> _submit() async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
-    setState(() { _busy = true; _error = null; });
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
     try {
       await ref.read(authRepositoryProvider).login(_email.text, _password.text);
       ref.invalidate(sessionBootstrapProvider);
@@ -99,7 +102,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 }
 
 class RegistrationScreen extends ConsumerStatefulWidget {
-  const RegistrationScreen({super.key, this.initialError, required this.onLogin});
+  const RegistrationScreen({
+    super.key,
+    this.initialError,
+    required this.onLogin,
+  });
 
   final String? initialError;
   final VoidCallback onLogin;
@@ -126,13 +133,14 @@ class _RegistrationScreenState extends ConsumerState<RegistrationScreen> {
 
   Future<void> _submit() async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
-    setState(() { _busy = true; _error = null; });
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
     try {
-      await ref.read(authRepositoryProvider).register(
-        _email.text,
-        _password.text,
-        _confirmation.text,
-      );
+      await ref
+          .read(authRepositoryProvider)
+          .register(_email.text, _password.text, _confirmation.text);
       ref.invalidate(sessionBootstrapProvider);
     } on AuthException catch (error) {
       if (mounted) setState(() => _error = error.message);
@@ -144,7 +152,8 @@ class _RegistrationScreenState extends ConsumerState<RegistrationScreen> {
   @override
   Widget build(BuildContext context) => AuthScaffold(
     title: 'Create your account',
-    subtitle: 'Registration creates a personal account only. Institution access is granted separately.',
+    subtitle:
+        'Registration creates a personal account only. Institution access is granted separately.',
     form: Form(
       key: _formKey,
       child: Column(
@@ -157,7 +166,8 @@ class _RegistrationScreenState extends ConsumerState<RegistrationScreen> {
           PasswordField(
             controller: _confirmation,
             label: 'Confirm password',
-            validator: (value) => value != _password.text ? 'Passwords do not match.' : null,
+            validator: (value) =>
+                value != _password.text ? 'Passwords do not match.' : null,
           ),
           if (_error ?? widget.initialError case final message?) ...[
             const SizedBox(height: 14),
@@ -166,7 +176,9 @@ class _RegistrationScreenState extends ConsumerState<RegistrationScreen> {
           const SizedBox(height: 22),
           FilledButton(
             onPressed: _busy ? null : _submit,
-            child: _busy ? const ButtonProgress() : const Text('Create account'),
+            child: _busy
+                ? const ButtonProgress()
+                : const Text('Create account'),
           ),
           TextButton(
             onPressed: _busy ? null : widget.onLogin,
@@ -179,7 +191,12 @@ class _RegistrationScreenState extends ConsumerState<RegistrationScreen> {
 }
 
 class AuthScaffold extends StatelessWidget {
-  const AuthScaffold({required this.title, required this.subtitle, required this.form, super.key});
+  const AuthScaffold({
+    required this.title,
+    required this.subtitle,
+    required this.form,
+    super.key,
+  });
   final String title;
   final String subtitle;
   final Widget form;
@@ -200,9 +217,15 @@ class AuthScaffold extends StatelessWidget {
                   children: [
                     const Icon(Icons.sign_language, size: 42),
                     const SizedBox(height: 18),
-                    Text('DualSign', style: Theme.of(context).textTheme.titleMedium),
+                    Text(
+                      'DualSign',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
                     const SizedBox(height: 10),
-                    Text(title, style: Theme.of(context).textTheme.headlineSmall),
+                    Text(
+                      title,
+                      style: Theme.of(context).textTheme.headlineSmall,
+                    ),
                     const SizedBox(height: 8),
                     Text(subtitle),
                     const SizedBox(height: 26),
@@ -231,14 +254,20 @@ class EmailField extends StatelessWidget {
     decoration: const InputDecoration(labelText: 'Email address'),
     validator: (value) {
       final email = value?.trim() ?? '';
-      if (email.isEmpty || !email.contains('@')) return 'Enter a valid email address.';
+      if (email.isEmpty || !email.contains('@'))
+        return 'Enter a valid email address.';
       return null;
     },
   );
 }
 
 class PasswordField extends StatelessWidget {
-  const PasswordField({required this.controller, required this.label, this.validator, super.key});
+  const PasswordField({
+    required this.controller,
+    required this.label,
+    this.validator,
+    super.key,
+  });
   final TextEditingController controller;
   final String label;
   final String? Function(String?)? validator;
@@ -248,7 +277,10 @@ class PasswordField extends StatelessWidget {
     controller: controller,
     obscureText: true,
     decoration: InputDecoration(labelText: label),
-    validator: validator ?? (value) => (value ?? '').length < 8 ? 'Use at least 8 characters.' : null,
+    validator:
+        validator ??
+        (value) =>
+            (value ?? '').length < 8 ? 'Use at least 8 characters.' : null,
   );
 }
 
@@ -271,11 +303,3 @@ class ButtonProgress extends StatelessWidget {
     child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
   );
 }
-
-final authRepositoryProvider = Provider<AuthRepository>((ref) {
-  final config = ref.watch(appSessionProvider);
-  return AuthRepository(
-    baseUrl: config.baseUrl,
-    storage: ref.watch(sessionStorageProvider),
-  );
-});

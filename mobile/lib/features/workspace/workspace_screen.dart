@@ -4,7 +4,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../mvp/communication_repository.dart';
 import '../mvp/mvp_screens.dart';
 import '../billing/billing_repository.dart';
-import '../auth/auth_screens.dart';
 import '../../app_session.dart';
 import 'app_section.dart';
 import 'workspace_state.dart';
@@ -37,6 +36,7 @@ class WorkspaceScreen extends ConsumerWidget {
             message: 'Sign in to access your DualSign workspace.',
             icon: Icons.login_outlined,
           );
+        if (section == AppSection.profile) return const _ProfilePanel();
         final selection = ref.watch(pilotSelectionProvider);
         return selection.when(
           loading: () => const _SessionState(
@@ -51,9 +51,9 @@ class WorkspaceScreen extends ConsumerWidget {
               icon: Icons.login_outlined,
             ),
             PilotSelectionStatus.noMembership => const SessionStatusScreen(
-              title: 'Institution access pending',
+              title: 'Personal workspace',
               message:
-                  'Your account is ready, but an authorized institution flow must grant membership before learning data is available.',
+                  'Your personal account is ready. Open Profile to manage your session. Personal learning content is not available yet; institutional activities require an active membership and cohort.',
               icon: Icons.domain_disabled_outlined,
             ),
             PilotSelectionStatus.ready => _WorkspaceContent(section: section),
@@ -249,44 +249,54 @@ class _WorkspaceHeader extends ConsumerWidget {
               ],
             ),
           ),
-          if (selection?.ready == true &&
-              selection!.memberships.length > 1) ...[
-            DropdownButton<int>(
-              value: selection.institutionId,
-              underline: const SizedBox.shrink(),
-              items: selection.memberships
-                  .map(
-                    (membership) => DropdownMenuItem<int>(
-                      value: membership.institutionId,
-                      child: Text(membership.institutionName),
-                    ),
-                  )
-                  .toList(),
-              onChanged: (id) {
-                if (id != null)
-                  ref
-                      .read(pilotSelectionProvider.notifier)
-                      .selectInstitution(id);
-              },
-            ),
-            if (selection.cohorts.length > 1)
-              DropdownButton<int>(
-                value: selection.cohortId,
-                underline: const SizedBox.shrink(),
-                items: selection.cohorts
-                    .map(
-                      (cohort) => DropdownMenuItem<int>(
-                        value: cohort.id,
-                        child: Text(cohort.name),
+          if (selection?.ready == true)
+            Flexible(
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: [
+                    if (selection!.memberships.length > 1)
+                      DropdownButton<int>(
+                        value: selection.institutionId,
+                        underline: const SizedBox.shrink(),
+                        items: selection.memberships
+                            .map(
+                              (membership) => DropdownMenuItem<int>(
+                                value: membership.institutionId,
+                                child: Text(membership.institutionName),
+                              ),
+                            )
+                            .toList(),
+                        onChanged: (id) {
+                          if (id != null)
+                            ref
+                                .read(pilotSelectionProvider.notifier)
+                                .selectInstitution(id);
+                        },
                       ),
-                    )
-                    .toList(),
-                onChanged: (id) {
-                  if (id != null)
-                    ref.read(pilotSelectionProvider.notifier).selectCohort(id);
-                },
+                    if (selection.cohorts.length > 1)
+                      DropdownButton<int>(
+                        value: selection.cohortId,
+                        underline: const SizedBox.shrink(),
+                        items: selection.cohorts
+                            .map(
+                              (cohort) => DropdownMenuItem<int>(
+                                value: cohort.id,
+                                child: Text(cohort.name),
+                              ),
+                            )
+                            .toList(),
+                        onChanged: (id) {
+                          if (id != null)
+                            ref
+                                .read(pilotSelectionProvider.notifier)
+                                .selectCohort(id);
+                        },
+                      ),
+                  ],
+                ),
               ),
-          ],
+            ),
         ],
       ),
     );
@@ -306,15 +316,21 @@ class _WorkspaceContent extends ConsumerWidget {
 
     if (section == AppSection.communicate) {
       return CommunicationScreen(
+        key: ValueKey(repositories.communication),
         repository: repositories.communication,
         playback: UnavailablePlayback(),
       );
     }
     if (section == AppSection.practice) {
-      return PracticeScreen(repository: repositories.practice);
+      return PracticeScreen(
+        key: ValueKey(repositories.practice),
+        repository: repositories.practice,
+        consent: repositories.consent,
+      );
     }
     if (section == AppSection.progress) {
       return ProgressScreen(
+        key: ValueKey(repositories.report),
         repository: repositories.report,
         enrollment: repositories.enrollment,
       );

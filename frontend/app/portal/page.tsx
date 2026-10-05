@@ -1,7 +1,8 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { PracticeActivityAuthor } from "./practice-activity-author";
 import {
   Alias,
   ApiError,
@@ -38,6 +39,16 @@ function messageFor(error: unknown) {
   return error instanceof Error ? error.message : "The request could not be completed.";
 }
 
+function useRequestScope(key: string | number) {
+  const token = useMemo(() => ({ key }), [key]);
+  const scope = useRef<typeof token | null>(token);
+  useEffect(() => {
+    scope.current = token;
+    return () => { scope.current = null; };
+  }, [token]);
+  return useCallback(() => scope.current === token, [token]);
+}
+
 export default function Home() {
   const [user, setUser] = useState<User | null>(null);
   const [memberships, setMemberships] = useState<Membership[]>([]);
@@ -56,6 +67,11 @@ export default function Home() {
   const [loginError, setLoginError] = useState("");
   const [billing, setBilling] = useState<BillingStatus | null>(null);
   const [billingBusy, setBillingBusy] = useState(false);
+  const catalogGeneration = useRef(0);
+  const [cohortRevision, setCohortRevision] = useState(0);
+  const institutionScope = useRequestScope(institutionId);
+  const recordScope = useRequestScope(`${institutionId}-${section}-${selectedId}`);
+  const refreshCohortPanels = useCallback(() => setCohortRevision((value) => value + 1), []);
 
   const boot = useCallback(async () => {
     try {
@@ -101,18 +117,21 @@ export default function Home() {
   }, []);
 
   const refreshCatalog = useCallback(async (id: number) => {
+    const generation = ++catalogGeneration.current;
     setCatalogLoading(true);
     setNotice(null);
     try {
       const data = await loadCatalog(id);
+      if (generation !== catalogGeneration.current) return;
       setCatalog(data);
       setEditing(false);
     } catch (error) {
+      if (generation !== catalogGeneration.current) return;
       setCatalog(emptyCatalog);
       setBilling(null);
       setNotice({ kind: "error", text: messageFor(error) });
     } finally {
-      setCatalogLoading(false);
+      if (generation === catalogGeneration.current) setCatalogLoading(false);
     }
   }, []);
 
@@ -157,10 +176,11 @@ export default function Home() {
   const aliasesForConcept = (id: number) => catalog.aliases.filter((alias) => alias.concept_id === id);
 
   async function refreshAfterWrite(success: string) {
-    if (institutionId === "") return;
+    if (institutionId === "" || !institutionScope()) return;
     setNotice({ kind: "success", text: success });
     setEditing(false);
     await refreshCatalog(institutionId);
+    if (!institutionScope()) return;
     setNotice({ kind: "success", text: success });
   }
 
@@ -183,11 +203,12 @@ export default function Home() {
     setNotice(null);
     try {
       await action();
+      if (!institutionScope()) return;
       await refreshAfterWrite(success);
     } catch (error) {
-      setNotice({ kind: "error", text: messageFor(error) });
+      if (institutionScope()) setNotice({ kind: "error", text: messageFor(error) });
     } finally {
-      setBusy(false);
+      if (institutionScope()) setBusy(false);
     }
   }
 
@@ -220,6 +241,7 @@ export default function Home() {
     setNotice(null);
     try {
       await request("/web/logout", { method: "POST" });
+      catalogGeneration.current++;
       setUser(null);
       setMemberships([]);
       setInstitutionId("");
@@ -404,6 +426,7 @@ export default function Home() {
         method: "POST",
         body: JSON.stringify(payload),
       });
+      if (!recordScope()) return;
       setVariants((current) => [variant, ...current]);
       setNotice({ kind: "success", text: "Variant added." });
       formElement.reset();
@@ -427,7 +450,7 @@ export default function Home() {
           hamnosys: variant.hamnosys,
         }),
       });
-      setVariants((current) => current.map((item) => item.id === updated.id ? updated : item));
+      if (recordScope()) setVariants((current) => current.map((item) => item.id === updated.id ? updated : item));
     }, "Variant updated.");
   }
 
@@ -491,6 +514,10 @@ export default function Home() {
             <select id="institution" value={institutionId} onChange={(event) => {
               const nextInstitutionId = event.target.value ? Number(event.target.value) : "";
               setInstitutionId(nextInstitutionId);
+              catalogGeneration.current++;
+              setCatalogLoading(false);
+              setEditing(false);
+              setBusy(false);
               setCatalog(emptyCatalog);
                setVariants([]);
                setBilling(null);
@@ -511,7 +538,7 @@ export default function Home() {
               <p className="rail-label">VOCABULARY</p>
               <nav className="nav-list" aria-label="Institution workspace sections">
                 {(["concepts", "signs", "plans", "cohorts"] as Section[]).map((item) => (
-                  <button key={item} className={`nav-item ${section === item ? "is-active" : ""}`} onClick={() => {
+                  <button key={item} aria-current={section === item ? "page" : undefined} className={`nav-item ${section === item ? "is-active" : ""}`} onClick={() => {
                     setSection(item);
                     setSelectedId(null);
                     setEditing(false);
@@ -558,7 +585,7 @@ export default function Home() {
                 <div>
                   <p className="kicker">{institution?.institution_name ?? "INSTITUTION"} <span className="kicker-divider">/</span> CURATION</p>
                   <h1>{heading}</h1>
-                  <p className="page-subtitle">{section === "concepts" ? "The ideas and alternate terms that anchor your vocabulary." : section === "signs" ? "Sign records, their review status and recorded variants." : "Ordered sign sequences with non-manual markers and review history."}</p>
+                  <p className="page-subtitle">{section === "concepts" ? "The ideas and alternate terms that anchor your vocabulary." : section === "signs" ? "Sign records, their review status and recorded variants." : section === "cohorts" ? "Manage pilot cohorts, practice activities, assignments and participation." : "Ordered sign sequences with non-manual markers and review history."}</p>
                 </div>
                  {section !== "cohorts" && <button className="button button--primary create-button" onClick={() => {
                   setSelectedId(null);
@@ -578,7 +605,12 @@ export default function Home() {
 
               {notice && <p className={`alert alert--${notice.kind}`} role={notice.kind === "error" ? "alert" : "status"}>{notice.text}</p>}
 
-               {section === "cohorts" ? <><CohortWorkspace institutionId={institutionId as number} canManage={institution?.role === "institution_admin"} /><CohortAssignmentPanel institutionId={institutionId as number} canManage={institution?.role === "institution_admin"} canViewProgress={institution?.role === "institution_admin" || institution?.role === "vocabulary_reviewer"} /><ParticipantRoster institutionId={institutionId as number} canManage={institution?.role === "institution_admin"} /></> : <div className="catalog-layout">
+                {section === "cohorts" ? <div key={institutionId}>
+                  <CohortWorkspace institutionId={institutionId as number} canManage={institution?.role === "institution_admin"} onChanged={refreshCohortPanels} />
+                  {institution?.role === "institution_admin" && <PracticeActivityAuthor institutionId={institutionId as number} plans={catalog.plans} signs={catalog.signs} onCreated={refreshCohortPanels} />}
+                  <CohortAssignmentPanel key={`assignment-${cohortRevision}`} institutionId={institutionId as number} canManage={institution?.role === "institution_admin"} canViewProgress={institution?.role === "institution_admin" || institution?.role === "vocabulary_reviewer"} />
+                  <ParticipantRoster key={`roster-${cohortRevision}`} institutionId={institutionId as number} canManage={institution?.role === "institution_admin"} />
+                </div> : <div className="catalog-layout">
                 <section className="record-column" aria-label={`${heading} list`}>
                   <label className="search-field">
                     <span className="search-icon" aria-hidden="true">⌕</span>
@@ -614,6 +646,8 @@ export default function Home() {
                 <section className="detail-column" aria-label={`${heading} details`}>
                   {editing ? (
                     <RecordForm
+                      key={`${institutionId}-${section}-${selectedId}`}
+                      institutionId={institutionId as number}
                       section={section}
                       selected={selected}
                       concepts={catalog.concepts}
@@ -677,7 +711,9 @@ function Brand() {
   return <Link className="brand" href="/" aria-label="DualSign vocabulary workbench home"><span className="brand__mark" aria-hidden="true">DS</span><span className="brand__text"><strong>DualSign</strong><span>VOCABULARY WORKBENCH</span></span></Link>;
 }
 
-function CohortWorkspace({ institutionId, canManage }: { institutionId: number; canManage: boolean }) {
+function CohortWorkspace({ institutionId, canManage, onChanged }: { institutionId: number; canManage: boolean; onChanged: () => void }) {
+  const scope = useRequestScope(institutionId);
+  const detailGeneration = useRef(0);
   const [cohorts, setCohorts] = useState<Cohort[]>([]);
   const [selected, setSelected] = useState<CohortDetail | null>(null);
   const [editing, setEditing] = useState(false);
@@ -685,12 +721,14 @@ function CohortWorkspace({ institutionId, canManage }: { institutionId: number; 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [detailPending, setDetailPending] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
       const rows = await request<Cohort[]>(`/portal/${institutionId}/cohorts`);
+      if (!scope()) return;
       setCohorts(rows);
       setSelected(null);
     } catch (reason) {
@@ -698,7 +736,7 @@ function CohortWorkspace({ institutionId, canManage }: { institutionId: number; 
     } finally {
       setLoading(false);
     }
-  }, [institutionId]);
+  }, [institutionId, scope]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 0);
@@ -706,15 +744,22 @@ function CohortWorkspace({ institutionId, canManage }: { institutionId: number; 
   }, [load]);
 
   async function open(cohort: Cohort) {
+    const generation = ++detailGeneration.current;
+    setDetailPending(true);
+    setSelected(null);
     setError("");
     try {
-      setSelected(await request<CohortDetail>(`/portal/${institutionId}/cohorts/${cohort.id}`));
+      const detail = await request<CohortDetail>(`/portal/${institutionId}/cohorts/${cohort.id}`);
+      if (!scope() || generation !== detailGeneration.current) return;
+      setSelected(detail);
       setEditing(false);
-    } catch (reason) { setError(messageFor(reason)); }
+    } catch (reason) { if (scope() && generation === detailGeneration.current) setError(messageFor(reason)); }
+    finally { if (scope() && generation === detailGeneration.current) setDetailPending(false); }
   }
 
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const generation = detailGeneration.current;
     setBusy(true);
     setError("");
     const form = new FormData(event.currentTarget);
@@ -730,39 +775,50 @@ function CohortWorkspace({ institutionId, canManage }: { institutionId: number; 
     try {
       const path = selected ? `/portal/${institutionId}/cohorts/${selected.id}` : `/portal/${institutionId}/cohorts`;
       await request<CohortDetail>(path, { method: selected ? "PATCH" : "POST", body: JSON.stringify(payload) });
+      if (!scope() || generation !== detailGeneration.current) return;
       setNotice(selected ? "Cohort updated." : "Cohort created.");
       setEditing(false);
       await load();
+      onChanged();
     } catch (reason) { setError(messageFor(reason)); }
     finally { setBusy(false); }
   }
 
   async function changeStatus(status: CohortStatus) {
     if (!selected) return;
+    const generation = detailGeneration.current;
     setBusy(true);
     try {
       const updated = await request<CohortDetail>(`/portal/${institutionId}/cohorts/${selected.id}`, { method: "PATCH", body: JSON.stringify({ status }) });
+      if (!scope() || generation !== detailGeneration.current) return;
       setSelected(updated);
       setCohorts((current) => current.map((cohort) => cohort.id === updated.id ? { ...cohort, ...updated } : cohort));
       setNotice(`Cohort marked ${status}.`);
+      onChanged();
     } catch (reason) { setError(messageFor(reason)); }
     finally { setBusy(false); }
   }
 
   const selectedSummary = selected?.report;
   return <section className="cohort-workspace" aria-label="Pilot cohorts">
-    <div className="cohort-heading"><div><p className="section-label">PILOT OPERATIONS</p><h2>Company pilot cohorts</h2><p className="page-subtitle">Create a controlled cohort for Flutter learners, then follow participation and synthetic practice reports.</p></div>{canManage && <button className="button button--primary" onClick={() => { setSelected(null); setEditing(true); setNotice(""); }}>＋ New cohort</button>}</div>
+    <div className="cohort-heading"><div><p className="section-label">PILOT OPERATIONS</p><h2>Company pilot cohorts</h2><p className="page-subtitle">Create a controlled cohort for Flutter learners, then follow participation and synthetic practice reports.</p></div>{canManage && <button className="button button--primary" disabled={loading || busy} onClick={() => { detailGeneration.current++; setSelected(null); setEditing(true); setNotice(""); }}>＋ New cohort</button>}</div>
     {notice && <p className="alert alert--success" role="status">{notice}</p>}
+    {detailPending && !editing && <p role="status">Loading cohort detail…</p>}
     {error && <p className="alert alert--error" role="alert">{error}</p>}
+    {!loading && editing && cohorts.length === 0 && <CohortForm selected={null} onSubmit={save} onCancel={() => setEditing(false)} busy={busy} />}
+    {!(editing && cohorts.length === 0) && <>
     {loading ? <div className="cohort-empty" role="status">Loading pilot cohorts…</div> : cohorts.length === 0 ? <div className="cohort-empty"><span aria-hidden="true">⌂</span><strong>No pilot cohorts yet</strong><p>{canManage ? "Create the first cohort for this institution." : "An institution administrator has not created a cohort yet."}</p></div> : <div className="cohort-layout"><div className="cohort-list">{cohorts.map((cohort) => <button key={cohort.id} className={`cohort-row ${selected?.id === cohort.id && !editing ? "is-selected" : ""}`} onClick={() => void open(cohort)}><span><strong>{cohort.name}</strong><small>{cohort.start_date}{cohort.end_date ? ` → ${cohort.end_date}` : " → open ended"}</small></span><CohortBadge status={cohort.status} /></button>)}</div><div className="cohort-detail">{editing ? <CohortForm selected={selected} onSubmit={save} onCancel={() => setEditing(false)} busy={busy} /> : selected ? <><div className="detail-topline"><p className="kicker">COHORT DETAIL</p><CohortBadge status={selected.status} /></div><h2 className="detail-title">{selected.name}</h2><div className="attribute-grid"><Attribute label="Window" value={`${selected.start_date} → ${selected.end_date ?? "Open ended"}`} /><Attribute label="Enrollment" value={`${selected.enrolled_count} enrolled`} /><Attribute label="Consent" value={selected.consent_required ? "Required" : "Not required"} /><Attribute label="Activities" value={String(selected.selected_activity_ids.length)} /></div>{canManage && <div className="detail-actions">{selected.status === "planned" && <button className="button button--primary" onClick={() => void changeStatus("active")} disabled={busy}>Activate cohort</button>}{selected.status === "active" && <button className="button button--danger-quiet" onClick={() => void changeStatus("closed")} disabled={busy}>Close enrollment</button>}<button className="button button--secondary" onClick={() => setEditing(true)} disabled={busy || selected.status === "closed"}>Edit cohort</button></div>}<div className="detail-section"><p className="section-label">REPORT SNAPSHOT</p>{selectedSummary ? <div className="attribute-grid"><Attribute label="Attempts" value={String(selectedSummary.attempts.total)} /><Attribute label="Unknown rate" value={`${Math.round(selectedSummary.attempts.unknown_rate * 100)}%`} /><Attribute label="Participants with attempts" value={String(selectedSummary.participation.participants_with_attempts)} /><Attribute label="Median latency" value={selectedSummary.latency_ms.p50 === null ? "—" : `${selectedSummary.latency_ms.p50} ms`} /></div> : <p className="quiet-copy">No report data is available yet.</p>}</div></> : <div className="detail-placeholder"><span className="detail-placeholder__glyph" aria-hidden="true">⌂</span><p className="kicker">COHORT DETAIL</p><h2>Choose a cohort to inspect</h2><p>Enrollment and aggregate report details will appear here.</p></div>}</div></div>}
+    </>}
   </section>;
 }
 
 function CohortAssignmentPanel({ institutionId, canManage, canViewProgress }: { institutionId: number; canManage: boolean; canViewProgress: boolean }) {
   const [cohorts, setCohorts] = useState<Cohort[]>([]);
   const [cohortId, setCohortId] = useState<number | "">("");
-  const [assignment, setAssignment] = useState<CohortAssignment | null>(null);
-  const [progress, setProgress] = useState<CohortProgress | null>(null);
+  const scope = useRequestScope(`${institutionId}-${cohortId}`);
+  const [detail, setDetail] = useState<{ cohortId: number; assignment: CohortAssignment; progress: CohortProgress | null } | null>(null);
+  const assignment = detail?.cohortId === cohortId ? detail.assignment : null;
+  const progress = detail?.cohortId === cohortId ? detail.progress : null;
   const [plans, setPlans] = useState<number[]>([]);
   const [activities, setActivities] = useState<number[]>([]);
   const [loading, setLoading] = useState(true);
@@ -780,14 +836,18 @@ function CohortAssignmentPanel({ institutionId, canManage, canViewProgress }: { 
   }, [institutionId]);
   const loadDetail = useCallback(async () => {
     if (cohortId === "") return;
+    setDetail(null);
+    setBusy(false);
+    setError(""); setNotice("");
     try {
       const [nextAssignment, nextProgress] = await Promise.all([
         request<CohortAssignment>(`/portal/${institutionId}/cohorts/${cohortId}/assignment`),
         canViewProgress ? request<CohortProgress>(`/portal/${institutionId}/cohorts/${cohortId}/progress`) : Promise.resolve(null),
       ]);
-      setAssignment(nextAssignment); setPlans(nextAssignment.selected_plan_ids); setActivities(nextAssignment.selected_activity_ids); setProgress(nextProgress);
-    } catch (reason) { setError(messageFor(reason)); }
-  }, [canViewProgress, cohortId, institutionId]);
+      if (!scope()) return;
+      setDetail({ cohortId, assignment: nextAssignment, progress: nextProgress }); setPlans(nextAssignment.selected_plan_ids); setActivities(nextAssignment.selected_activity_ids);
+    } catch (reason) { if (scope()) setError(messageFor(reason)); }
+  }, [canViewProgress, cohortId, institutionId, scope]);
   useEffect(() => { const timer = window.setTimeout(() => void loadCohorts(), 0); return () => window.clearTimeout(timer); }, [loadCohorts]);
   useEffect(() => { const timer = window.setTimeout(() => void loadDetail(), 0); return () => window.clearTimeout(timer); }, [loadDetail]);
   const cohort = cohorts.find((item) => item.id === cohortId);
@@ -795,9 +855,13 @@ function CohortAssignmentPanel({ institutionId, canManage, canViewProgress }: { 
   async function save() {
     if (cohortId === "") return;
     setBusy(true); setError(""); setNotice("");
-    try { await request(`/portal/${institutionId}/cohorts/${cohortId}/assignment`, { method: "PUT", body: JSON.stringify({ selected_plan_ids: plans, selected_activity_ids: activities }) }); setNotice("Assignment updated."); await loadDetail(); }
-    catch (reason) { setError(messageFor(reason)); }
-    finally { setBusy(false); }
+    try {
+      await request(`/portal/${institutionId}/cohorts/${cohortId}/assignment`, { method: "PUT", body: JSON.stringify({ selected_plan_ids: plans, selected_activity_ids: activities }) });
+      if (!scope()) return;
+      await loadDetail(); setNotice("Assignment updated.");
+    }
+    catch (reason) { if (scope()) setError(messageFor(reason)); }
+    finally { if (scope()) setBusy(false); }
   }
 
   return <section className="assignment-panel" aria-label="Cohort assignment and progress"><div className="roster-heading"><div><p className="section-label">ASSIGNMENT / PROGRESS</p><h2>Cohort learning scope</h2><p className="page-subtitle">Validated activities and synthetic aggregate progress only. Raw media and advanced analytics are not implemented.</p></div></div>{error && <p className="alert alert--error" role="alert">{error}</p>}{notice && <p className="alert alert--success" role="status">{notice}</p>}{loading ? <div className="roster-empty" role="status">Loading assignment options…</div> : cohorts.length === 0 ? <div className="roster-empty"><strong>Create a cohort before assigning learning scope.</strong></div> : <><label className="form-field roster-select"><span className="field-label">Cohort</span><select value={cohortId} onChange={(event) => setCohortId(Number(event.target.value))}>{cohorts.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.status}</option>)}</select></label>{assignment && <><div className="assignment-grid"><fieldset className="item-picker"><legend>Validated plans <span>({assignment.plans.length})</span></legend>{assignment.plans.length === 0 ? <p>No validated plans are available.</p> : assignment.plans.map((plan) => <label className="check-row" key={plan.id}><input type="checkbox" checked={plans.includes(plan.id)} onChange={() => setPlans(toggle(plans, plan.id))} disabled={!canManage || cohort?.status === "closed"} /><span><strong>{plan.code}</strong><small>{plan.label}</small></span></label>)}</fieldset><fieldset className="item-picker"><legend>Validated activities <span>({assignment.activities.length})</span></legend>{assignment.activities.length === 0 ? <p>No validated activities are available.</p> : assignment.activities.map((activity) => <label className="check-row" key={activity.id}><input type="checkbox" checked={activities.includes(activity.id)} onChange={() => setActivities(toggle(activities, activity.id))} disabled={!canManage || cohort?.status === "closed"} /><span><strong>{activity.prompt}</strong><small>{activity.plan_code} · activity #{activity.id}</small></span></label>)}</fieldset></div>{canManage && cohort?.status !== "closed" && <button className="button button--primary" onClick={() => void save()} disabled={busy}>{busy ? "Saving assignment…" : "Save assignment"}</button>}</>}{canViewProgress && progress && <ProgressView progress={progress} />}</>}</section>;
@@ -825,7 +889,15 @@ function ProgressView({ progress, onExport, exportBusy = false }: { progress: Co
   }
   const exportAction = onExport ?? (() => void downloadReport());
   const isExportBusy = onExport ? exportBusy : localBusy;
-  return <div className="progress-view"><div className="progress-heading"><div><p className="section-label">SAFE PROGRESS REPORT</p><p className="quiet-copy">Controlled aggregate MVP report. Raw media and attempt payloads are excluded.</p></div><button className="button button--secondary" onClick={exportAction} disabled={isExportBusy}>{isExportBusy ? "Preparing report…" : "Export report"}</button></div>{exportError && <p className="alert alert--error" role="alert">{exportError}</p>}<div className="attribute-grid"><Attribute label="Enrolled (historical)" value={String(summary.enrolled_count)} /><Attribute label="Active now" value={String(summary.active_count)} /><Attribute label="Completed" value={`${summary.completed_count} / ${summary.active_count}`} /><Attribute label="Completion rate" value={`${Math.round(summary.completion_rate * 100)}%`} /><Attribute label="Attempts" value={String(summary.attempts.total)} /><Attribute label="Latency p50 / p95" value={`${summary.latency_ms.p50 ?? "—"} / ${summary.latency_ms.p95 ?? "—"} ms`} /></div>{progress.participants.length === 0 ? <p className="quiet-copy">No enrolled participants yet.</p> : <div className="progress-table" role="table" aria-label="Safe participant progress"><div className="progress-table__row progress-table__row--head" role="row"><span>Participant</span><span>Status</span><span>Completion</span><span>Attempts</span><span>Results</span></div>{progress.participants.map((participant) => <div className="progress-table__row" role="row" key={participant.user_id}><span><strong>{participant.identifier}</strong></span><span>{participant.enrollment_status}</span><span>{participant.completed ? "Complete" : "In progress"}</span><span>{participant.attempts}</span><span>{participant.correct} / {participant.incorrect} / {participant.unknown}</span></div>)}</div>}</div>;
+  return <div className="progress-view">
+    <div className="progress-heading"><div><p className="section-label">SAFE PROGRESS REPORT</p><p className="quiet-copy">Controlled aggregate MVP report. Raw media and attempt payloads are excluded.</p></div><button className="button button--secondary" onClick={exportAction} disabled={isExportBusy}>{isExportBusy ? "Preparing report…" : "Export report"}</button></div>
+    {exportError && <p className="alert alert--error" role="alert">{exportError}</p>}
+    <div className="attribute-grid"><Attribute label="Enrolled (historical)" value={String(summary.enrolled_count)} /><Attribute label="Active now" value={String(summary.active_count)} /><Attribute label="Completed" value={`${summary.completed_count} / ${summary.active_count}`} /><Attribute label="Completion rate" value={`${Math.round(summary.completion_rate * 100)}%`} /><Attribute label="Attempts" value={String(summary.attempts.total)} /><Attribute label="Latency p50 / p95" value={`${summary.latency_ms.p50 ?? "—"} / ${summary.latency_ms.p95 ?? "—"} ms`} /></div>
+    {progress.participants.length === 0 ? <p className="quiet-copy">No enrolled participants yet.</p> : <div className="progress-table"><table aria-label="Safe participant progress">
+      <thead><tr>{["Participant", "Status", "Completion", "Attempts", "Correct / incorrect / unknown"].map((label) => <th scope="col" key={label}>{label}</th>)}</tr></thead>
+      <tbody>{progress.participants.map((participant) => <tr key={participant.user_id}><th scope="row">{participant.identifier}</th><td>{participant.enrollment_status}</td><td>{participant.completed ? "Complete" : "In progress"}</td><td>{participant.attempts}</td><td>{participant.correct} / {participant.incorrect} / {participant.unknown}</td></tr>)}</tbody>
+    </table></div>}
+  </div>;
 }
 
 function parseIds(value: string) {
@@ -835,8 +907,10 @@ function parseIds(value: string) {
 function ParticipantRoster({ institutionId, canManage }: { institutionId: number; canManage: boolean }) {
   const [cohorts, setCohorts] = useState<Cohort[]>([]);
   const [members, setMembers] = useState<PortalMember[]>([]);
-  const [participants, setParticipants] = useState<PortalParticipant[]>([]);
+  const [roster, setRoster] = useState<{ cohortId: number; rows: PortalParticipant[] } | null>(null);
   const [cohortId, setCohortId] = useState<number | "">("");
+  const scope = useRequestScope(`${institutionId}-${cohortId}`);
+  const participants = roster?.cohortId === cohortId ? roster.rows : [];
   const [memberId, setMemberId] = useState<number | "">("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -864,12 +938,14 @@ function ParticipantRoster({ institutionId, canManage }: { institutionId: number
 
   const loadParticipants = useCallback(async () => {
     if (cohortId === "") return;
+    setMemberId(""); setError(""); setNotice(""); setBusy(false);
     try {
-      setParticipants(await request<PortalParticipant[]>(`/portal/${institutionId}/cohorts/${cohortId}/participants`));
+      const rows = await request<PortalParticipant[]>(`/portal/${institutionId}/cohorts/${cohortId}/participants`);
+      if (scope()) setRoster({ cohortId, rows });
     } catch (reason) {
-      setError(messageFor(reason));
+      if (scope()) setError(messageFor(reason));
     }
-  }, [cohortId, institutionId]);
+  }, [cohortId, institutionId, scope]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 0);
@@ -886,12 +962,13 @@ function ParticipantRoster({ institutionId, canManage }: { institutionId: number
 
   async function enroll(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (cohortId === "" || memberId === "") return;
+    if (cohortId === "" || memberId === "" || roster?.cohortId !== cohortId) return;
     setBusy(true); setError(""); setNotice("");
     try {
       await request(`/portal/${institutionId}/cohorts/${cohortId}/participants`, { method: "POST", body: JSON.stringify({ user_id: memberId }) });
-      setMemberId(""); setNotice("Participant enrolled."); await loadParticipants();
-    } catch (reason) { setError(messageFor(reason)); } finally { setBusy(false); }
+      if (!scope()) return;
+      setMemberId(""); await loadParticipants(); setNotice("Participant enrolled.");
+    } catch (reason) { if (scope()) setError(messageFor(reason)); } finally { if (scope()) setBusy(false); }
   }
 
   async function deactivate(userId: number) {
@@ -899,8 +976,9 @@ function ParticipantRoster({ institutionId, canManage }: { institutionId: number
     setBusy(true); setError(""); setNotice("");
     try {
       await request(`/portal/${institutionId}/cohorts/${cohortId}/participants/${userId}/deactivate`, { method: "POST" });
-      setNotice("Participant marked inactive."); await loadParticipants();
-    } catch (reason) { setError(messageFor(reason)); } finally { setBusy(false); }
+      if (!scope()) return;
+      await loadParticipants(); setNotice("Participant marked inactive.");
+    } catch (reason) { if (scope()) setError(messageFor(reason)); } finally { if (scope()) setBusy(false); }
   }
 
   if (!canManage) return null;
@@ -930,11 +1008,24 @@ function Field({ label, name, type = "text", required = false, defaultValue, aut
   return <label className="form-field"><span className="field-label">{label}{required && <span aria-hidden="true"> *</span>}</span><input name={name} type={type} required={required} defaultValue={defaultValue} autoComplete={autoComplete} /></label>;
 }
 
-function RecordForm({ section, selected, concepts, signs, variants, onConcept, onSign, onPlan, onCancel, busy }: {
+function RecordForm({ institutionId, section, selected, concepts, signs, variants: suppliedVariants, onConcept, onSign, onPlan, onCancel, busy }: {
+  institutionId: number;
   section: Section; selected: Concept | Sign | Plan | null; concepts: Concept[]; signs: Sign[]; variants: Variant[];
   onConcept: (event: FormEvent<HTMLFormElement>) => void; onSign: (event: FormEvent<HTMLFormElement>) => void;
   onPlan: (event: FormEvent<HTMLFormElement>) => void; onCancel: () => void; busy: boolean;
 }) {
+  const [planVariants, setPlanVariants] = useState<Variant[] | null>(null);
+  const [variantError, setVariantError] = useState("");
+  const [variantAttempt, setVariantAttempt] = useState(0);
+  useEffect(() => {
+    if (section !== "plans") return;
+    let active = true;
+    Promise.all(signs.map((sign) => request<Variant[]>(`/vocabulary/${institutionId}/signs/${sign.id}/variants`)))
+      .then((rows) => { if (active) { setPlanVariants(rows.flat()); setVariantError(""); } })
+      .catch((reason) => { if (active) setVariantError(messageFor(reason)); });
+    return () => { active = false; };
+  }, [institutionId, section, signs, variantAttempt]);
+  const variants = section === "plans" ? planVariants ?? [] : suppliedVariants;
   const editing = Boolean(selected);
   const title = section === "concepts" ? "Concept" : section === "signs" ? "Sign" : "Sign plan";
   return (
@@ -942,6 +1033,8 @@ function RecordForm({ section, selected, concepts, signs, variants, onConcept, o
       <div className="detail-topline"><p className="kicker">{editing ? "EDIT RECORD" : "NEW RECORD"}</p><button className="icon-button" type="button" onClick={onCancel} aria-label="Close editor">×</button></div>
       <h2>{editing ? `Edit ${title.toLowerCase()}` : `Create ${title.toLowerCase()}`}</h2>
       <p className="detail-intro">{section === "concepts" ? "Give this concept a stable institutional code and a clear label." : section === "signs" ? "Connect a sign identifier and gloss to an existing concept." : "Compose a sequence using signs already registered for this institution."}</p>
+      {section === "plans" && planVariants === null && <p role="status">Loading sign variants…</p>}
+      {variantError && <div role="alert"><p>{variantError}</p><button type="button" className="button button--secondary" onClick={() => setVariantAttempt((value) => value + 1)}>Retry variants</button></div>}
       <form className="form-stack record-form" onSubmit={section === "concepts" ? onConcept : section === "signs" ? onSign : onPlan}>
         {section === "concepts" ? <>
           <Field label="Concept code" name="code" required={!editing} defaultValue={(selected as Concept | null)?.code} />
@@ -964,7 +1057,7 @@ function RecordForm({ section, selected, concepts, signs, variants, onConcept, o
           })}</div>}</fieldset>
           <label className="form-field"><span className="field-label">Non-manual markers <span className="field-hint">JSON array, positions start at 0</span></span><textarea name="markers" rows={5} defaultValue={JSON.stringify((selected as Plan | null)?.non_manual_markers ?? [], null, 2)} spellCheck={false} /></label>
         </>}
-        <div className="form-actions"><button type="button" className="button button--quiet" onClick={onCancel} disabled={busy}>Cancel</button><button className="button button--primary" disabled={busy}>{busy ? "Saving…" : editing ? "Save changes" : `Create ${title.toLowerCase()}`}</button></div>
+        <div className="form-actions"><button type="button" className="button button--quiet" onClick={onCancel} disabled={busy}>Cancel</button><button className="button button--primary" disabled={busy || (section === "plans" && planVariants === null)}>{busy ? "Saving…" : editing ? "Save changes" : `Create ${title.toLowerCase()}`}</button></div>
       </form>
     </div>
   );
